@@ -2,7 +2,7 @@ import os
 from fabric.api import task, run, env, settings, cd
 from fabtools.vagrant import ssh_config, _settings_dict
 import fabtools
-from fabtools import require
+from fabtools import require, postgres
 from fabric.contrib import files
 
 
@@ -40,47 +40,30 @@ def upgrade():
 
 @task
 def install():
-    env['redmine_version'] = env.get('redmine_version', 'http://rubyforge.org/frs/download.php/76771/redmine-2.2.3.tar.gz')
+    env['redmine_version'] = env.get('redmine_version',
+            'http://www.redmine.org/releases/redmine-2.5.0.tar.gz')
     require.deb.packages(['sudo'])
 
-    fabtools.require.system.locale('fr_FR.UTF-8')
-
     fabtools.deb.update_index()
-
-    env['mysql_user'] = 'root'
-    env['mysql_password'] = os.environ.get('MYSQL_PASSWORD', 'password')
-    fabtools.deb.preseed_package('mysql-server', {
-        'mysql-server/root_password': ('password', env['mysql_password']),
-        'mysql-server/root_password_again': ('password', env['mysql_password']),
-    })
 
     require.deb.packages([
         'build-essential',
         'devscripts',
         'locales',
         'apache2',
-        'mysql-server',
-        'mysql-client',
+        'postgresql',
         'vim',
         'mc',
         'curl',
         'wget',
-        'ruby1.8',
-        'ruby1.8-dev',
         'supervisor',
         'python-pip',
         'python-dev',
         'subversion',
         'libxslt1-dev',
         'libxml2-dev',
-        'libmysqld-dev',
         'libmagick++-dev',
         'libsqlite3-dev'
-    ])
-
-    require.deb.nopackages([
-        'rubygems',
-        'rubygems1.8'
     ])
 
     _add_user(
@@ -88,8 +71,9 @@ def install():
         password=None,
         shell='/bin/bash'
     )
-    require.mysql.user('redmine', 'password')
-    require.mysql.database('redmine', owner='redmine')
+
+    postgres.create_user(name="redmine", password="redmin is coolios 88")
+    postgres.create_database(name="redmine", owner="redmine")
 
     with settings(user='redmine'):
         run('mkdir -p ~/gem')
@@ -121,12 +105,11 @@ export RAILS_ENV=production
                 '/home/redmine/redmine/config/database.yml',
                 """\
 production:
-    adapter: mysql2
+    adapter: postgresql
     database: redmine
     host: localhost
-    socket: /var/run/mysqld/mysqld.sock
     username: redmine
-    password: password
+    password: redmin is coolios 88
     encoding: utf8
     reconnect: true
 
@@ -148,7 +131,7 @@ environment: production
             )
             run('chmod 0600 config/database.yml')
             files.append('/home/redmine/redmine/Gemfile', 'gem "thin"')
-            run('bundle install --without sqlite postgresql')
+            run('bundle install --without sqlite mysql')
             run('rake generate_secret_token')
             run('rake db:migrate')
             run('rake redmine:load_default_data REDMINE_LANG=en')
@@ -177,12 +160,12 @@ environment=GEM_HOME='/home/redmine/gem',RUBYLIB='/home/redmine/lib',RAILS_ENV='
         '/etc/apache2/sites-available/redmine.conf',
         """\
 <VirtualHost *:80>
-    ServerName redmine.example.com
+    ServerName redmine-staging.example.com
 
-    Redirect / https://redmine.example.com/
+    Redirect / https://redmine-staging.example.com/
 </VirtualHost>
 <VirtualHost *:443>
-    ServerName redmine.example.com
+    ServerName redmine-staging.example.com
 
     DocumentRoot /home/redmine/redmine/public/
 
@@ -241,7 +224,5 @@ emailAddress = contact@example.com
         run('mkdir -p /etc/ssl/localcerts')
         run('openssl req -config /tmp/openssl.cnf -new -x509 -days 365 -nodes -out /etc/ssl/localcerts/apache.pem -keyout /etc/ssl/localcerts/apache.key')
         run('rm /tmp/openssl.cnf')
-
-    run('pip install mercurial')
 
     run('/etc/init.d/apache2 force-reload')
